@@ -1,4 +1,5 @@
 use cfg_if::cfg_if;
+use std::any::Any;
 use std::ops::{Add, Div, Mul, Sub};
 use std::rc::Rc;
 use std::{cell::RefCell, cmp::Ordering};
@@ -46,6 +47,11 @@ pub enum Value {
     /// ForeignValue trait, which can receive commands via lisp code
     Foreign(ForeignValueRc),
 
+    /// An opaque reference to a foreign value (struct, enum, etc.) implementing
+    /// the OpaqueValue trait. Opaque values can only be passed around by Lisp
+    /// code, but cannot be directly interacted with.
+    Opaque(OpaqueValueRc),
+
     /// A tail-call that has yet to be executed. Internal use only!
     TailCall {
         func: Rc<Value>,
@@ -68,6 +74,7 @@ pub enum Type {
     Function,
     Macro,
     Foreign,
+    Opaque,
     TailCall,
 }
 
@@ -108,11 +115,15 @@ impl ToString for Type {
             Type::Function => "function",
             Type::Macro => "macro",
             Type::Foreign => "foreign",
+            Type::Opaque => "opaque",
             Type::TailCall => "tail call",
         }
         .to_string()
     }
 }
+
+/// Alias for the contents of Value::Opaque
+pub type OpaqueValueRc = Rc<RefCell<dyn Any>>;
 
 impl Value {
     pub const NIL: Value = Value::List(List::NIL);
@@ -133,6 +144,7 @@ impl Value {
             Value::Float(_) => "float",
             Value::Symbol(_) => "symbol",
             Value::Foreign(_) => "foreign value",
+            Value::Opaque(_) => "opaque value",
             Value::TailCall { func: _, args: _ } => "tail call",
         }
     }
@@ -154,6 +166,7 @@ impl Value {
             Value::Float(_) => Type::Float,
             Value::Symbol(_) => Type::Symbol,
             Value::Foreign(_) => Type::Foreign,
+            Value::Opaque(_) => Type::Opaque,
             Value::TailCall { func: _, args: _ } => Type::TailCall,
         }
     }
@@ -372,6 +385,7 @@ impl std::fmt::Display for Value {
             Value::Float(this) => write!(f, "{}", this),
             Value::Symbol(Symbol(this)) => write!(f, "{}", this),
             Value::Foreign(_) => f.write_str("<foreign_value>"),
+            Value::Opaque(_) => f.write_str("<opaque_value>"),
             Value::TailCall { func, args } => {
                 write!(f, "<tail-call: {:?} with {:?} >", func, args)
             }
@@ -395,6 +409,7 @@ impl Debug for Value {
             Value::Float(this) => write!(f, "Value::Float({:?})", this),
             Value::Symbol(Symbol(this)) => write!(f, "Value::Symbol({:?})", this),
             Value::Foreign(_) => f.write_str("<foreign_value>"),
+            Value::Opaque(v) => f.write_str("<opaque_value>"),
             Value::TailCall { func, args } => write!(
                 f,
                 "Value::TailCall {{ func: {:?}, args: {:?} }}",
@@ -418,6 +433,7 @@ impl PartialEq for Value {
             (Value::Symbol(this), Value::Symbol(other)) => this == other,
             (Value::HashMap(this), Value::HashMap(other)) => Rc::ptr_eq(this, other),
             (Value::Foreign(this), Value::Foreign(other)) => Rc::ptr_eq(this, other),
+            (Value::Opaque(this), Value::Opaque(other)) => Rc::ptr_eq(this, other),
             (
                 Value::TailCall {
                     func: this_func,
@@ -628,6 +644,7 @@ impl std::hash::Hash for Value {
             Value::Lambda(x) => x.hash(state),
             Value::Macro(x) => x.hash(state),
             Value::Foreign(x) => std::ptr::hash(x, state),
+            Value::Opaque(x) => std::ptr::hash(x, state),
             Value::TailCall { func, args } => {
                 func.hash(state);
                 args.hash(state);
